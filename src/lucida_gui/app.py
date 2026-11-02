@@ -7,7 +7,7 @@ from lucida_api import Config, LucidaClient, Job
 
 
 def main() -> None:
-    from PySide6.QtCore import QThread, Signal, Qt
+    from PySide6.QtCore import QThread, Signal, Qt, QTimer
     from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
         QHBoxLayout, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
         QLabel, QMessageBox, QTabWidget, QTextEdit, QFileDialog)
@@ -147,6 +147,8 @@ def main() -> None:
     app.setApplicationName("Lucida Desktop")
     window = Window()
     window.show()
+    if "--smoke" in sys.argv:
+        QTimer.singleShot(100, app.quit)
     sys.exit(app.exec())
 
 if __name__ == "__main__":
