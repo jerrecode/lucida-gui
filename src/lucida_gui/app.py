@@ -28,12 +28,25 @@ def main() -> None:
             except Exception as exc:
                 self.error.emit(str(exc))
 
+    class SearchWorker(QThread):
+        results = Signal(list)
+        error = Signal(str)
+        def __init__(self, config: Config, query: str):
+            super().__init__()
+            self.config, self.query = config, query
+        def run(self):
+            try:
+                matches = asyncio.run(LucidaClient(self.config).search(self.query))
+                self.results.emit([match.to_dict() for match in matches])
+            except Exception as exc:
+                self.error.emit(str(exc))
+
     class Window(QMainWindow):
         def __init__(self):
             super().__init__()
             self.config = Config()
             self.api = LucidaClient(self.config)
-            self.workers: list[TransferWorker] = []
+            self.workers: list[QThread] = []
             self.setWindowTitle("Lucida Desktop 0.1.0")
             self.resize(860, 560)
             tabs = QTabWidget()
@@ -78,6 +91,25 @@ def main() -> None:
             layout.addWidget(refresh)
             tabs.addTab(downloads, "Downloads")
 
+            search_page = QWidget()
+            sl = QVBoxLayout(search_page)
+            sl.addWidget(QLabel("Search MusicBrainz recording metadata. Results do not provide audio files."))
+            search_row = QHBoxLayout()
+            self.query = QLineEdit()
+            self.query.setPlaceholderText("Track, artist, album ...")
+            self.query.setAccessibleName("Recording search query")
+            self.query.returnPressed.connect(self.start_search)
+            search_row.addWidget(self.query)
+            sb = QPushButton("Search")
+            sb.clicked.connect(self.start_search)
+            search_row.addWidget(sb)
+            sl.addLayout(search_row)
+            self.search_results = QTextEdit()
+            self.search_results.setReadOnly(True)
+            self.search_results.setPlainText("Enter search terms to retrieve recording metadata.")
+            sl.addWidget(self.search_results)
+            tabs.addTab(search_page, "Search")
+
             info = QWidget()
             il = QVBoxLayout(info)
             desc = QTextEdit()
@@ -100,6 +132,20 @@ def main() -> None:
                 padding: 10px; border-radius: 6px; } QPushButton:hover { background: #42669c; }
                 QTabBar::tab { padding: 12px; } QTabBar::tab:selected { background: #304c78; }''')
             self.refresh()
+
+        def start_search(self):
+            query = self.query.text().strip()
+            if not query:
+                return
+            self.search_results.setPlainText("Searching metadata provider...")
+            worker = SearchWorker(self.config, query)
+            self.workers.append(worker)
+            worker.results.connect(lambda results: self.search_results.setPlainText(
+                "\n\n".join(f"{r['title']}  |  {r['artist']}\nMusicBrainz ID: {r['id']}  •  score: {r['score']}"
+                            for r in results) or "No recordings found"))
+            worker.error.connect(lambda reason: self.search_results.setPlainText(f"Metadata search unavailable: {reason}"))
+            worker.finished.connect(lambda: self.workers.remove(worker) if worker in self.workers else None)
+            worker.start()
 
         def choose_output(self):
             folder = QFileDialog.getExistingDirectory(self, "Choose download location", str(self.config.output_dir))
