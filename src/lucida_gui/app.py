@@ -194,8 +194,13 @@ def main() -> None:
     window = Window()
     window.show()
     if "--smoke" in sys.argv:
-        QTimer.singleShot(100, app.quit)
-    sys.exit(app.exec())
+        # Close the real window through the normal Qt ownership lifecycle.
+        # app.quit() alone can tear down QApplication with a living top-level widget.
+        QTimer.singleShot(200, window.close)
+    code = app.exec()
+    del window
+    del app
+    sys.exit(code)
 
 if __name__ == "__main__":
     main()
