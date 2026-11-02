@@ -4,6 +4,6 @@ Qt 6 desktop frontend of [Lucida API](https://github.com/jerrecode/lucida-api). 
 
 Linux install: `./install.sh`; Windows PowerShell: `./install.ps1`. Isolated `.venv` is created with Python >=3.11 and the Lucida API dependency is installed first. For sibling local source checkout set `LUCIDA_API_SOURCE=../lucida-api`. Requires an available PySide6 wheel, its platform OpenGL/EGL libraries on Linux, and a desktop session. The CI runner installs `libegl1`, `libopengl0`, and `libxkbcommon-x11-0` before a headless smoke test. Run `lucida-gui` from the environment's executable directory.
 
-This is not an official Lucida client. Lucida streaming-provider search, albums/playlists, pause, resume, cancel/retry controls, virtualized large-list view, native executable packaging, and tested Windows UI are future tasks. The close dialog prevents app exit while a job is active. No claim is made that full upstream features function.
+This is not an official Lucida client. Lucida streaming-provider search, albums/playlists, pause, resume, cancel/retry controls, virtualized large-list view, native executable packaging and real-display Windows UX tests are future tasks. Qt offscreen startup passed on Windows and Ubuntu CI. The close dialog prevents app exit while a job is active. No claim is made that full upstream features function.
 
 Roadmap: [API implementation plan](https://github.com/jerrecode/lucida-api/blob/main/IMPLEMENTATION_PLAN.md).
