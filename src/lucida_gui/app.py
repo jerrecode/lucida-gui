@@ -194,9 +194,13 @@ def main() -> None:
     window = Window()
     window.show()
     if "--smoke" in sys.argv:
-        # Close the real window through the normal Qt ownership lifecycle.
-        # app.quit() alone can tear down QApplication with a living top-level widget.
-        QTimer.singleShot(200, window.close)
+        # Preserve the event loop long enough to process QObject.deleteLater().
+        app.setQuitOnLastWindowClosed(False)
+        def shutdown_smoke():
+            window.close()
+            window.deleteLater()
+            QTimer.singleShot(200, app.quit)
+        QTimer.singleShot(200, shutdown_smoke)
     code = app.exec()
     del window
     del app
