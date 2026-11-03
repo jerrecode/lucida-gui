@@ -17,9 +17,13 @@ def main() -> None:
         finished_job = Signal(dict)
         error = Signal(str)
         cancelled = Signal()
-        def __init__(self, config: Config, source: str, filename: str | None = None):
+        def __init__(self, config: Config, source: str, filename: str | None = None,
+                     operation: str = "acquire", job_id: str | None = None,
+                     expected_sha256: str | None = None):
             super().__init__()
             self.config, self.source, self.filename = config, source, filename
+            self.operation, self.job_id = operation, job_id
+            self.expected_sha256 = expected_sha256
             self._loop = None
             self._task = None
             self._cancel_requested = False
@@ -39,7 +43,13 @@ def main() -> None:
                     raise asyncio.CancelledError
                 def report(job: Job):
                     self.changed.emit(job.to_dict())
-                return await LucidaClient(self.config).acquire(self.source, self.filename, report)
+                api = LucidaClient(self.config)
+                if self.operation == "resume" and self.job_id:
+                    return await api.resume(self.job_id, report, expected_sha256=self.expected_sha256)
+                if self.operation == "retry" and self.job_id:
+                    return await api.retry(self.job_id, report, expected_sha256=self.expected_sha256)
+                return await api.acquire(self.source, self.filename, report,
+                                         expected_sha256=self.expected_sha256)
             try:
                 self.finished_job.emit(asyncio.run(perform()).to_dict())
             except asyncio.CancelledError:
@@ -88,6 +98,10 @@ def main() -> None:
             self.host.setMaximumWidth(180)
             line.addWidget(self.host)
             layout.addLayout(line)
+            self.checksum = QLineEdit()
+            self.checksum.setPlaceholderText("Optional expected SHA-256 (64 hex digits)")
+            self.checksum.setAccessibleName("Expected complete-file SHA-256")
+            layout.addWidget(self.checksum)
             row = QHBoxLayout()
             sample = QPushButton("Generate test tone")
             sample.clicked.connect(lambda: self.start("sample://tone"))
@@ -98,6 +112,12 @@ def main() -> None:
             cancel = QPushButton("Cancel active transfer")
             cancel.clicked.connect(self.cancel_active)
             row.addWidget(cancel)
+            retry = QPushButton("Retry selected")
+            retry.clicked.connect(lambda: self.start_existing("retry"))
+            row.addWidget(retry)
+            resume = QPushButton("Resume selected")
+            resume.clicked.connect(lambda: self.start_existing("resume"))
+            row.addWidget(resume)
             choose = QPushButton("Choose output folder")
             choose.clicked.connect(self.choose_output)
             row.addWidget(choose)
@@ -197,13 +217,27 @@ def main() -> None:
                     return
             self.status.setText("No active transfer to cancel")
 
-        def start(self, source: str, host: str | None = None):
+        def start_existing(self, operation: str):
+            row = self.jobs.currentRow()
+            if row < 0 or row >= len(getattr(self, "_history", [])):
+                QMessageBox.information(self, "Select job", "Select a failed, cancelled or interrupted job first.")
+                return
+            selected = self._history[row]
+            host = self.host.text().strip()
+            if selected.source.startswith(("http://", "https://")) and not host:
+                QMessageBox.warning(self, "Trusted host", "Enter the source's explicitly trusted hostname.")
+                return
+            self.start(selected.source, host or None, operation=operation, job_id=selected.id)
+
+        def start(self, source: str, host: str | None = None,
+                  operation: str = "acquire", job_id: str | None = None):
             if sum(isinstance(w, TransferWorker) and w.isRunning() for w in self.workers) >= 2:
                 QMessageBox.information(self, "Active transfers", "At most two transfers can run at once.")
                 return
             cfg = Config(state_dir=self.config.state_dir, output_dir=self.config.output_dir,
                          allowed_hosts=(host,) if host else ())
-            worker = TransferWorker(cfg, source)
+            worker = TransferWorker(cfg, source, operation=operation, job_id=job_id,
+                                    expected_sha256=self.checksum.text().strip() or None)
             self.workers.append(worker)
             worker.changed.connect(lambda job: self.status.setText(
                 f"{job['state']}: {job['transferred']} bytes"))
@@ -216,6 +250,7 @@ def main() -> None:
 
         def refresh(self):
             jobs = self.api.jobs(200)
+            self._history = jobs
             self.jobs.setRowCount(len(jobs))
             for i, job in enumerate(jobs):
                 for col, val in enumerate((job.state, job.source, job.transferred, job.destination)):
