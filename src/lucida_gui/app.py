@@ -16,17 +16,39 @@ def main() -> None:
         changed = Signal(dict)
         finished_job = Signal(dict)
         error = Signal(str)
+        cancelled = Signal()
         def __init__(self, config: Config, source: str, filename: str | None = None):
             super().__init__()
             self.config, self.source, self.filename = config, source, filename
+            self._loop = None
+            self._task = None
+            self._cancel_requested = False
+        def cancel(self):
+            """Request cancellation on the worker's own event loop."""
+            self._cancel_requested = True
+            if self._loop is not None and self._task is not None:
+                try:
+                    self._loop.call_soon_threadsafe(self._task.cancel)
+                except RuntimeError:
+                    pass  # worker already exited
         def run(self):
-            try:
+            async def perform():
+                self._loop = asyncio.get_running_loop()
+                self._task = asyncio.current_task()
+                if self._cancel_requested:
+                    raise asyncio.CancelledError
                 def report(job: Job):
                     self.changed.emit(job.to_dict())
-                job = asyncio.run(LucidaClient(self.config).acquire(self.source, self.filename, report))
-                self.finished_job.emit(job.to_dict())
+                return await LucidaClient(self.config).acquire(self.source, self.filename, report)
+            try:
+                self.finished_job.emit(asyncio.run(perform()).to_dict())
+            except asyncio.CancelledError:
+                self.cancelled.emit()
             except Exception as exc:
                 self.error.emit(str(exc))
+            finally:
+                self._task = None
+                self._loop = None
 
     class SearchWorker(QThread):
         results = Signal(list)
@@ -73,6 +95,9 @@ def main() -> None:
             start = QPushButton("Download authorized URL")
             start.clicked.connect(self.start_url)
             row.addWidget(start)
+            cancel = QPushButton("Cancel active transfer")
+            cancel.clicked.connect(self.cancel_active)
+            row.addWidget(cancel)
             choose = QPushButton("Choose output folder")
             choose.clicked.connect(self.choose_output)
             row.addWidget(choose)
@@ -132,6 +157,10 @@ def main() -> None:
                 padding: 10px; border-radius: 6px; } QPushButton:hover { background: #42669c; }
                 QTabBar::tab { padding: 12px; } QTabBar::tab:selected { background: #304c78; }''')
             self.refresh()
+            self.refresh_timer = QTimer(self)
+            self.refresh_timer.setInterval(1500)
+            self.refresh_timer.timeout.connect(self.refresh)
+            self.refresh_timer.start()
 
         def start_search(self):
             query = self.query.text().strip()
@@ -160,7 +189,18 @@ def main() -> None:
                 return
             self.start(self.url.text().strip(), self.host.text().strip())
 
+        def cancel_active(self):
+            for worker in reversed(self.workers):
+                if isinstance(worker, TransferWorker) and worker.isRunning():
+                    worker.cancel()
+                    self.status.setText("Cancellation requested...")
+                    return
+            self.status.setText("No active transfer to cancel")
+
         def start(self, source: str, host: str | None = None):
+            if sum(isinstance(w, TransferWorker) and w.isRunning() for w in self.workers) >= 2:
+                QMessageBox.information(self, "Active transfers", "At most two transfers can run at once.")
+                return
             cfg = Config(state_dir=self.config.state_dir, output_dir=self.config.output_dir,
                          allowed_hosts=(host,) if host else ())
             worker = TransferWorker(cfg, source)
@@ -170,6 +210,7 @@ def main() -> None:
             worker.finished_job.connect(lambda job: (self.status.setText(f"Completed: {job['destination']}"), self.refresh()))
             worker.error.connect(lambda msg: (self.status.setText(f"Error: {msg}"), self.refresh(),
                                               QMessageBox.warning(self, "Transfer failed", msg)))
+            worker.cancelled.connect(lambda: (self.status.setText("Transfer cancelled"), self.refresh()))
             worker.finished.connect(lambda: self.workers.remove(worker) if worker in self.workers else None)
             worker.start()
 
