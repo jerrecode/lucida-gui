@@ -28,3 +28,17 @@ jobs:
       - run: python -m compileall -q src
       - run: python -m pytest -q
       - run: python -m pip wheel --no-deps --wheel-dir dist .
+      - name: Linux source installer and Qt smoke
+        if: runner.os == 'Linux'
+        run: |
+          LUCIDA_API_SOURCE=api-dependency bash ./install.sh
+          QT_QPA_PLATFORM=offscreen ./.venv/bin/lucida-gui --smoke
+      - name: Windows PowerShell installer and Qt smoke
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:LUCIDA_API_SOURCE = (Resolve-Path api-dependency).Path
+          .\install.ps1
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          & .\.venv\Scripts\lucida-gui.exe --smoke
+
